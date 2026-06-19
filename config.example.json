@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jlink-rtt": {
+      "command": "python",
+      "args": [
+        "-m",
+        "src.server"
+      ],
+      "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP-mimo"
+    }
+  }
+}
