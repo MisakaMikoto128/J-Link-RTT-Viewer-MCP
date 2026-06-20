@@ -87,12 +87,12 @@ class JLinkManager:
         self._encoding: str = "utf-8"
         self._channel: int = 0
         self._rtt_buffer: list[RTTData] = []
+        self._rtt_buffer_max: int = 10000
         self._rtt_lock = asyncio.Lock()
         self._rtt_cb_addr: int = 0  # RTT control block address in RAM
 
         # 线程同步
         self._executor_lock = asyncio.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
 
         # 日志文件
         self._log_file: Any = None
@@ -108,9 +108,11 @@ class JLinkManager:
 
     def _run_in_executor(self, func: Callable, *args: Any) -> Any:
         """在线程池中执行阻塞操作"""
-        if self._loop is None:
-            self._loop = asyncio.get_event_loop()
-        return self._loop.run_in_executor(None, func, *args)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+        return loop.run_in_executor(None, func, *args)
 
     async def connect(
         self,
@@ -123,7 +125,7 @@ class JLinkManager:
         """连接到 J-Link 和目标 MCU
 
         Args:
-            target: 目标设备型号 (如 STM32F103C8T6)
+            target: 目标设备型号 (如 STM32F103C8)
             interface: 调试接口 (SWD 或 JTAG)
             speed: 连接速度 (kHz)
             channel: RTT 通道号
@@ -346,13 +348,19 @@ class JLinkManager:
             self._do_read_rtt_manual_with_rd_update, -1, max_size
         )
 
+        # 过滤指定通道
+        channel_set = set(channels)
+        raw_data_list = [(ch, data) for ch, data in raw_data_list if ch in channel_set]
+
         # 解码并格式化数据
         for channel, raw_data in raw_data_list:
             if raw_data and self._decoder is not None:
                 decoded = self._decoder.decode(bytes(raw_data))
+                # 去除首尾空字节和空白
+                decoded = decoded.strip("\x00").strip()
                 if decoded:
                     # 解析 ANSI 颜色代码
-                    metadata = self._parse_ansi_metadata(decoded)
+                    metadata = self._parse_ansi_metadata(decoded, channel)
 
                     rtt_data = {
                         "timestamp": time.time(),
@@ -363,6 +371,9 @@ class JLinkManager:
                     }
                     all_data.append(rtt_data)
 
+                    # 写入日志文件（如果正在录制）
+                    self._write_log_file(decoded + "\n")
+
                     # 添加到缓冲区
                     async with self._rtt_lock:
                         self._rtt_buffer.append(RTTData(
@@ -372,6 +383,9 @@ class JLinkManager:
                             raw=bytes(raw_data),
                             metadata=metadata,
                         ))
+                        # 限制缓冲区大小
+                        if len(self._rtt_buffer) > self._rtt_buffer_max:
+                            self._rtt_buffer = self._rtt_buffer[-self._rtt_buffer_max:]
 
         return {
             "success": True,
@@ -405,12 +419,12 @@ class JLinkManager:
             self._encoding = "utf-8"
             self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
-    def _parse_ansi_metadata(self, text: str) -> dict[str, Any]:
+    def _parse_ansi_metadata(self, text: str, channel: int = 0) -> dict[str, Any]:
         """解析 ANSI 颜色代码，提取元数据"""
         metadata: dict[str, Any] = {
             "has_ansi": False,
             "level": "INFO",
-            "source": "unknown",
+            "source": f"ch{channel}",
         }
 
         # 检查是否有 ANSI 转义序列
@@ -510,7 +524,11 @@ class JLinkManager:
         if self.state != ConnectionState.CONNECTED:
             return {"success": False, "message": "Not connected"}
 
-        reset_mode = ResetMode(mode)
+        try:
+            reset_mode = ResetMode(mode)
+        except ValueError:
+            valid_modes = [m.value for m in ResetMode]
+            return {"success": False, "message": f"Invalid mode: {mode}. Valid: {valid_modes}"}
 
         try:
             if reset_mode == ResetMode.AUTO_RECONNECT:
@@ -526,7 +544,7 @@ class JLinkManager:
 
     async def _reset_in_place(self) -> dict[str, Any]:
         """重置并保留会话（5步 dance）"""
-        async def do_reset() -> tuple[bool, str]:
+        def do_reset() -> tuple[bool, str]:
             jlink = self._ensure_jlink()
             try:
                 jlink.reset(1, False)
@@ -546,7 +564,7 @@ class JLinkManager:
 
     async def _reset_and_halt(self) -> dict[str, Any]:
         """重置并暂停（CPU 停在复位状态）"""
-        async def do_reset() -> tuple[bool, str]:
+        def do_reset() -> tuple[bool, str]:
             jlink = self._ensure_jlink()
             try:
                 jlink.reset(0, True)  # halt=True
@@ -568,7 +586,7 @@ class JLinkManager:
             return {"success": False, "message": "No connection parameters for reconnect"}
 
         # 1. 发送 reset 命令
-        async def do_reset() -> None:
+        def do_reset() -> None:
             jlink = self._ensure_jlink()
             jlink.reset(1, False)
 
@@ -898,10 +916,15 @@ class JLinkManager:
         try:
             results: list[tuple[int, list[int]]] = []
 
-            cb = bytearray(jlink.memory_read(self._rtt_cb_addr, 512))
-            num_up = struct.unpack_from("<I", cb, 16)[0]
+            # 先读取头部获取通道数
+            header = bytearray(jlink.memory_read(self._rtt_cb_addr, 24))
+            num_up = struct.unpack_from("<I", header, 16)[0]
             if num_up == 0 or num_up > 16:
                 return []
+            num_down = struct.unpack_from("<I", header, 20)[0]
+            # 动态计算 CB 大小
+            cb_size = 24 + (num_up + num_down) * 24
+            cb = bytearray(jlink.memory_read(self._rtt_cb_addr, cb_size))
 
             channels_to_read = [channel] if channel >= 0 else list(range(min(num_up, 16)))
             cb_modified = False
@@ -962,10 +985,13 @@ class JLinkManager:
         time.sleep(0.05)
 
         try:
-            cb = bytearray(jlink.memory_read(self._rtt_cb_addr, 512))
-
-            num_up = struct.unpack_from("<I", cb, 16)[0]
-            num_down = struct.unpack_from("<I", cb, 20)[0]
+            # 先读取头部获取通道数
+            header = bytearray(jlink.memory_read(self._rtt_cb_addr, 24))
+            num_up = struct.unpack_from("<I", header, 16)[0]
+            num_down = struct.unpack_from("<I", header, 20)[0]
+            # 动态计算 CB 大小: 24 (header) + (num_up + num_down) * 24
+            cb_size = 24 + (num_up + num_down) * 24
+            cb = bytearray(jlink.memory_read(self._rtt_cb_addr, cb_size))
 
             down_base = 24 + num_up * 24
 

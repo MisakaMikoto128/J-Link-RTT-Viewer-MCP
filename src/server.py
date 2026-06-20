@@ -59,7 +59,7 @@ async def connect(
     """连接到 J-Link 调试器和目标 MCU
 
     Args:
-        target: 目标设备型号 (如 STM32F103C8T6, STM32F407VG, nRF52840)
+        target: 目标设备型号 (如 STM32F103C8, STM32F407VG, nRF52840)
         interface: 调试接口 (SWD 或 JTAG)，默认 SWD
         speed: 连接速度 (kHz)，默认 4000
         channel: RTT 通道号，默认 0
@@ -511,7 +511,7 @@ async def debugging_guide() -> str:
 
 ## 常用操作
 
-1. 连接设备: `connect(target="STM32F103C8T6", interface="SWD")`
+1. 连接设备: `connect(target="STM32F103C8", interface="SWD")`
 2. 读取日志: `read_rtt()` (读取所有通道)
 3. 重置设备: `reset(mode="auto_reconnect")`
 4. 烧录固件: `flash_firmware(firmware_path="path/to/firmware.bin")`
