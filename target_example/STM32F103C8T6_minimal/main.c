@@ -15,21 +15,12 @@
 #define RTT_CHANNEL_CMD    2    /* 命令通道 */
 
 /* 全局变量 */
-static volatile uint32_t g_tick_counter = 0;
+volatile uint32_t g_tick_counter = 0;
 static volatile uint32_t g_loop_counter = 0;
 
 /* 函数声明 */
 static void SystemClock_Config(void);
 static void Error_Handler(void);
-
-/**
- * @brief 系统滴答定时器中断处理
- */
-void SysTick_Handler(void)
-{
-    HAL_IncTick();
-    g_tick_counter++;
-}
 
 /**
  * @brief 主函数
@@ -46,12 +37,10 @@ int main(void)
     SEGGER_RTT_Init();
     
     /* 输出启动信息 */
-    SEGGER_RTT_SetStringOutputColor(RTT_CHANNEL_LOG, RTT_LOG_COLOR_GREEN);
     SEGGER_RTT_printf(RTT_CHANNEL_LOG, "=== STM32F103C8T6 RTT Test ===\r\n");
     SEGGER_RTT_printf(RTT_CHANNEL_LOG, "Build: %s %s\r\n", __DATE__, __TIME__);
     SEGGER_RTT_printf(RTT_CHANNEL_LOG, "MCU: STM32F103C8T6 (Cortex-M3)\r\n");
     SEGGER_RTT_printf(RTT_CHANNEL_LOG, "RTT Channels: 0-15\r\n");
-    SEGGER_RTT_SetStringOutputColor(RTT_CHANNEL_LOG, RTT_LOG_COLOR_DEFAULT);
     
     /* 主循环 */
     while (1)
@@ -74,7 +63,7 @@ int main(void)
                              temp / 10, temp % 10, humi / 10, humi % 10);
             
             /* 检查是否有命令输入 */
-            if (SEGGER_RTT_HasKey(RTT_CHANNEL_CMD))
+            if (SEGGER_RTT_HasKey())
             {
                 char cmd_buf[32];
                 int cmd_len = SEGGER_RTT_Read(RTT_CHANNEL_CMD, cmd_buf, sizeof(cmd_buf) - 1);

@@ -9,6 +9,7 @@
 
 /* External variables --------------------------------------------------------*/
 extern void Error_Handler(void);
+extern volatile uint32_t g_tick_counter;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -89,6 +90,7 @@ void PendSV_Handler(void)
 void SysTick_Handler(void)
 {
   HAL_IncTick();
+  g_tick_counter++;
 }
 
 /* Private functions ---------------------------------------------------------*/

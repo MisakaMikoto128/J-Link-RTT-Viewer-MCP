@@ -26,19 +26,3 @@ void HAL_MspInit(void)
 void HAL_MspDeInit(void)
 {
 }
-
-/**
-  * @brief  Initialize the PPP MSP.
-  * @retval None
-  */
-void HAL_MspInit(void)
-{
-}
-
-/**
-  * @brief  DeInitialize the PPP MSP.
-  * @retval None
-  */
-void HAL_MspDeInit(void)
-{
-}
