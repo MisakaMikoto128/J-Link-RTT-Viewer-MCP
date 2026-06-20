@@ -49,3 +49,24 @@ Thumbs.db
 jlink_mcp.log
 *.tmp
 *.bak
+
+# Keil MDK-ARM 编译输出
+MDK-ARM/STM32F103C8T6/
+MDK-ARM/*.htm
+MDK-ARM/*.dep
+MDK-ARM/*.lnp
+MDK-ARM/*.map
+MDK-ARM/*.axf
+MDK-ARM/*.hex
+MDK-ARM/*.hex_1.bin
+MDK-ARM/*.o
+MDK-ARM/*.d
+MDK-ARM/*.lst
+MDK-ARM/JLinkLog.txt
+MDK-ARM/JLinkSettings.ini
+MDK-ARM/EventRecorderStub.scvd
+MDK-ARM/STM32F103C8T6.uvguix.*
+MDK-ARM/STM32F103C8T6.uvoptx
+MDK-ARM/STM32F103C8T6.BAT
+MDK-ARM/RTE/
+MDK-ARM/DebugConfig/
