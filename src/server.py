@@ -6,11 +6,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import sys
-from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -82,7 +80,11 @@ async def connect(
         return json.dumps(result, ensure_ascii=False, indent=2)
     except ConnectionError as e:
         return json.dumps(
-            {"success": False, "message": str(e), "hint": "Check if J-Link is connected and MCU is powered"},
+            {
+                "success": False,
+                "message": str(e),
+                "hint": "Check if J-Link is connected and MCU is powered",
+            },
             ensure_ascii=False,
         )
     except Exception as e:
@@ -414,10 +416,11 @@ async def get_device_status() -> str:
         设备状态的 JSON 字符串
     """
     manager = get_manager()
+    is_connected = manager.state.value == "connected"
     return json.dumps(
         {
             "state": manager.state.value,
-            "device_info": manager._device_info_to_dict() if manager.state.value == "connected" else None,
+            "device_info": manager._device_info_to_dict() if is_connected else None,
         },
         ensure_ascii=False,
         indent=2,
