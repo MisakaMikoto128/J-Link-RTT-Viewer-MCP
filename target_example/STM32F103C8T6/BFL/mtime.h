@@ -1,0 +1,119 @@
+/**
+ * @file mtime.h
+ * @author Liu Yuanlin (liuyuanlins@outlook.com)
+ * @brief
+ * @version 0.1
+ * @date 2023-01-30
+ * @last modified 2023-01-30
+ *
+ * @copyright Copyright (c) 2023 Liu Yuanlin Personal.
+ *
+ */
+#ifndef MTIME_H
+#define MTIME_H
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#include "cpu_time.h"
+#include "rtc_time.h"
+#include "mytime.h"
+
+    /* 自定义的时间结构体 */
+    struct mtm_t
+    {
+        uint16_t nYear;
+        uint8_t nMonth;
+        uint8_t nDay;
+        uint8_t nHour;
+        uint8_t nMin;
+        uint8_t nSec;
+        uint8_t nWeek; /* 0 = Sunday */
+    };
+
+    typedef uint64_t mtime_t;
+
+    /**
+     * @brief 获取当前协调世界时（UTC）也被称为格林尼治标准时间（GMT）表示。如果mtm不为NULL，那么会将当前时间写入mtm指向的变量中。
+     *
+     * @param mtm 存放日期时间结果的对象。
+     * @return mtime_t 当前协调世界时（UTC）秒时间戳。
+     */
+    mtime_t mgmtime(struct mtm_t *mtm);
+
+    /**
+     * @brief 获取当前本地时间。如果mtm不为NULL，那么会将当前时间写入mtm指向的变量中。
+     *
+     * @param mtm 存放日期时间结果的对象。
+     * @return mtime_t 当前本地时间秒时间戳。
+     */
+    mtime_t mlocaltime(struct mtm_t *mtm);
+
+    typedef uint32_t PeriodREC_t;
+#define MAX_PERIOD_ID 10 // 最大的周期ID号，从0开始计数。
+
+    /**
+     * @brief 查询是否到了需要的周期。这个函数中高速查询，如果判断周期到了，就会
+     * 返回true，否则返回false,并且当周期到了之后会更新last_exe_tick，保证每周期只会判
+     * 断结果为真一次。用于在主循环中方便的构建周期性执行的代码段。
+     *
+     * 内置一个PeriodREC_t的最后一次执行时间的时间戳表，period_id标识。
+     * @param period_id 周期id，全局唯一。
+     * @param period 周期。
+     * @return true 周期到了
+     * @return false 周期未到。
+     */
+    bool period_query(uint8_t period_id, PeriodREC_t period);
+    /**
+     * @brief 同period_query_user，只是时间记录再一个uint32_t*指向的变量中。
+     *
+     * @param period_recorder 记录运行时间的变量的指针。
+     * @param period 周期。
+     * @return true 周期到了
+     * @return false 周期未到。
+     */
+    bool period_query_user(PeriodREC_t *period_recorder, PeriodREC_t period);
+
+    typedef struct
+    {
+        PeriodREC_t start; // 记录时间
+        bool isFinished;   // 是否完成
+        bool isStarted;    // 是否开始
+    } DelayREC_t;
+
+    /**
+     * @brief 从系统开始运行，是否经过了delay时间。
+     *
+     * @param delay_recorder
+     * @param delay
+     * @return true 延时条件满足
+     * @return false
+     */
+    bool delay_one_times(DelayREC_t *delay_rec, uint32_t delay);
+
+#define TIME_STR_LEN 8
+
+    /**
+     * @brief 将时间字符串转换为秒数
+     *
+     * @param timeStr
+     * @return uint32_t 如果格式错误返回-1, 否则返回秒数
+     */
+    int timeStr2Sec(char timeStr[TIME_STR_LEN + 1]);
+
+    /**
+     * @brief 将秒数转换为时间字符串
+     *
+     * @param sec
+     * @param timeStr
+     */
+    void sec2TimeStr(uint32_t sec, char timeStr[TIME_STR_LEN + 1]);
+#ifdef __cplusplus
+}
+#endif
+#endif //! MTIME_H
