@@ -1,7 +1,7 @@
 /**
   ******************************************************************************
   * @file    stm32f1xx_hal_conf.h
-  * @brief   HAL configuration file for STM32F103C8T6 minimal project
+  * @brief   HAL configuration file for STM32F103C8T6 minimal RTT test project
   ******************************************************************************
   */
 
@@ -22,27 +22,27 @@ extern "C" {
 #define HAL_CORTEX_MODULE_ENABLED
 
 /* ########################## Oscillator Values adaptation ############### */
-#if !defined(HSE_VALUE)
+#if !defined (HSE_VALUE)
   #define HSE_VALUE    8000000U
 #endif
 
-#if !defined(HSE_STARTUP_TIMEOUT)
+#if !defined (HSE_STARTUP_TIMEOUT)
   #define HSE_STARTUP_TIMEOUT    100U
 #endif
 
-#if !defined(HSI_VALUE)
+#if !defined (HSI_VALUE)
   #define HSI_VALUE    8000000U
 #endif
 
-#if !defined(LSI_VALUE)
+#if !defined (LSI_VALUE)
   #define LSI_VALUE    40000U
 #endif
 
-#if !defined(LSE_VALUE)
+#if !defined (LSE_VALUE)
   #define LSE_VALUE    32768U
 #endif
 
-#if !defined(LSE_STARTUP_TIMEOUT)
+#if !defined (LSE_STARTUP_TIMEOUT)
   #define LSE_STARTUP_TIMEOUT    5000U
 #endif
 
@@ -54,12 +54,6 @@ extern "C" {
 
 /* ########################## Assert Selection ############################## */
 /* #define USE_FULL_ASSERT    1U */
-
-/* ################## Ethernet peripheral configuration ##################### */
-/* Not applicable */
-
-/* ################## SPI peripheral configuration ########################## */
-/* Not applicable */
 
 /* Includes ------------------------------------------------------------------*/
 #ifdef HAL_RCC_MODULE_ENABLED

@@ -1,0 +1,21 @@
+; *************************************************************
+; *** Scatter-Link Description File for STM32F103C8T6        ***
+; *** 栈放到 RAM 顶部 (0x20004000~0x20004FFF)，避免与       ***
+; *** ZI 数据重叠导致 HardFault                              ***
+; *************************************************************
+
+LR_IROM1 0x08000000 0x00010000  {    ; 64KB Flash
+  ER_IROM1 0x08000000 0x00010000  {
+    *.o (RESET, +First)
+    *(InRoot$$Sections)
+    .ANY (+RO)
+    .ANY (+XO)
+  }
+  RW_IRAM1 0x20000000 0x00004000  {  ; 16KB 给全局变量 + 堆
+    .ANY (+RW +ZI)
+  }
+  RW_IRAM_STACK 0x20004000 0x00001000  {  ; 顶部 4KB 给栈
+    startup_stm32f103xb.o (STACK, +First)
+    *.o (STACK, +Last)
+  }
+}
