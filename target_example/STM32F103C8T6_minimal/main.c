@@ -18,6 +18,12 @@ static void SystemClock_Config(void);
 static void Error_Handler(void);
 static void LED_Init(void);
 
+static inline void delay_ms(uint32_t ms)
+{
+    uint32_t start = HAL_GetTick();
+    while ((HAL_GetTick() - start) < ms) {}
+}
+
 int main(void)
 {
     HAL_Init();
@@ -35,18 +41,25 @@ int main(void)
     SEGGER_RTT_WriteString(0, "\r\n=== STM32F103C8T6 RTT Test ===\r\n");
 
     uint32_t loop = 0;
+    uint32_t last_led_tick = HAL_GetTick();
+    uint32_t last_log_tick = HAL_GetTick();
 
     while (1)
     {
         loop++;
 
-        /* 每 500ms 输出一次心跳 */
-        if (loop % 500 == 0)
+        /* LED 翻转 - 每 500ms */
+        if ((HAL_GetTick() - last_led_tick) >= 500)
         {
-            SEGGER_RTT_printf(0, "Heartbeat: %lu\r\n", loop);
-            
-            /* LED 翻转 - 证明主循环在跑 */
+            last_led_tick += 500;
             HAL_GPIO_TogglePin(LED_GPIO_PORT, LED_PIN);
+        }
+
+        /* 每 1000ms 输出一次心跳 */
+        if ((HAL_GetTick() - last_log_tick) >= 1000)
+        {
+            last_log_tick += 1000;
+            SEGGER_RTT_printf(0, "Heartbeat: %lu\r\n", loop);
         }
 
         /* 检查是否有命令输入 */
@@ -71,7 +84,8 @@ int main(void)
             }
         }
 
-        HAL_Delay(1);
+        /* 短暂让出 CPU，避免空转 */
+        __WFI();
     }
 }
 
