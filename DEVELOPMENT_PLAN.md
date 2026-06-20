@@ -10,6 +10,7 @@
 2. **实现 AI 友好的接口**，支持自动化调试、日志读取、设备控制
 3. **完善错误处理**，确保 AI 能处理所有边界情况
 4. **提供清晰的文档**，包括 API 文档和使用示例
+5. **实现闭环测试**，AI 可以编译→烧录→连接→验证 RTT 通信
 
 ## 技术栈
 
@@ -18,6 +19,26 @@
 - **J-Link 库**: `pylink-square==1.6.0` (必须)
 - **异步框架**: `asyncio` + `anyio`
 - **测试**: `pytest` + `pytest-asyncio`
+- **STM32 工具链**: Keil MDK-ARM (UV4.exe)
+
+## 项目结构
+
+```
+J-Link-RTT-Viewer-MCP-mimo/
+├── src/                          # MCP 服务器代码
+│   ├── server.py                 # MCP 服务器入口
+│   └── core/
+│       └── jlink_manager.py      # J-Link 管理器
+├── target_example/               # STM32 测试工程
+│   └── STM32F103C8T6_minimal/    # 精简的 RTT 测试固件
+│       ├── main.c                # 主程序（RTT + LED）
+│       ├── MDK-ARM/              # Keil 工程
+│       │   ├── STM32F103C8T6.uvprojx
+│       │   └── STM32F103C8T6.sct # Scatter 文件
+│       └── CLAUDE.md             # 编译/烧录说明
+├── tests/                        # 测试代码
+└── docs/                         # 文档
+```
 
 ## 开发阶段
 
@@ -121,25 +142,98 @@
 
 **交付物**: 完整的资源和提示系统
 
-### 阶段 6：测试和文档 (Day 7)
+### 阶段 6：闭环测试 (Day 7)
 
-#### 任务 6.1：单元测试
-- 测试所有工具函数
-- 测试错误处理路径
-- 测试边界情况
+#### 任务 6.1：STM32 测试工程验证
+- 编译精简 RTT 测试工程
+- 烧录到 STM32F103C8T6
+- 验证 LED 闪烁（程序运行）
+- 验证 RTT 输出（通信正常）
 
-#### 任务 6.2：集成测试
-- 端到端测试流程
-- 模拟 J-Link 设备测试
-- 真实设备测试
+#### 任务 6.2：MCP 服务器集成测试
+- 启动 MCP 服务器
+- 使用 MCP Inspector 测试工具
+- 验证连接/读取/断开流程
 
-#### 任务 6.3：文档完善
-- API 文档
-- 使用示例
-- 故障排除指南
-- 贡献指南
+#### 任务 6.3：AI 闭环测试流程
+- AI 自动编译固件
+- AI 自动烧录固件
+- AI 自动连接设备
+- AI 自动读取 RTT 日志
+- AI 自动验证通信结果
 
-**交付物**: 完整的测试套件和文档
+**交付物**: 完整的闭环测试流程
+
+## 闭环测试流程（AI 自动化）
+
+### 前置条件
+1. J-Link 调试器已连接电脑
+2. STM32F103C8T6 开发板已上电
+3. Keil MDK-ARM 已安装 (UV4.exe)
+4. Python 虚拟环境已配置
+
+### 测试步骤
+
+#### 步骤 1：编译 STM32 固件
+```bash
+cd target_example/STM32F103C8T6_minimal/MDK-ARM
+"C:\DevTools\Keil_v5\UV4\UV4.exe" -b STM32F103C8T6.uvprojx -j0 -o build.log
+# 检查 ExitCode: 0=成功, 1=警告, 2=错误
+```
+
+#### 步骤 2：烧录固件
+```bash
+"C:\DevTools\Keil_v5\UV4\UV4.exe" -f STM32F103C8T6.uvprojx -j0 -o flash.log
+# 检查 ExitCode: 0=成功
+# 验证：LED 开始闪烁
+```
+
+#### 步骤 3：启动 MCP 服务器
+```bash
+cd /path/to/J-Link-RTT-Viewer-MCP-mimo
+python -m src.server
+```
+
+#### 步骤 4：AI 连接设备
+```
+goal: 使用 MCP 服务器连接 STM32F103C8T6
+- 调用 connect 工具
+- 参数: target="STM32F103C8T6", interface="SWD", speed=4000
+- 验证: 返回设备信息
+```
+
+#### 步骤 5：AI 读取 RTT 日志
+```
+goal: 读取 STM32 的 RTT 日志
+- 调用 read_rtt 工具
+- 参数: timeout=2.0
+- 验证: 收到 "Heartbeat: xxx" 消息
+```
+
+#### 步骤 6：AI 发送命令
+```
+goal: 向 STM32 发送 ping 命令
+- 调用 write_rtt 工具
+- 参数: data="ping", channel=0
+- 验证: 收到 "pong" 响应
+```
+
+#### 步骤 7：AI 断开连接
+```
+goal: 断开 STM32 连接
+- 调用 disconnect 工具
+- 验证: 返回断开成功
+```
+
+### 验证标准
+
+| 检查项 | 预期结果 | 验证方法 |
+|--------|----------|----------|
+| LED 闪烁 | 每 500ms 翻转 | 肉眼观察 |
+| RTT 连接 | 返回设备信息 | MCP 工具返回 |
+| RTT 读取 | 收到心跳日志 | RTT Viewer 或 MCP |
+| RTT 写入 | 收到 pong 响应 | MCP 工具返回 |
+| 断开连接 | 正常断开 | MCP 工具返回 |
 
 ## 边界情况处理清单
 
@@ -283,6 +377,11 @@ async def read_rtt(channels: list[int] = None,
 - 测试重置和重连流程
 - 测试烧录流程
 
+### 闭环测试（STM32 硬件）
+- 编译 → 烧录 → 连接 → 读取 → 验证
+- LED 闪烁验证程序运行
+- RTT 通信验证数据传输
+
 ### 边界测试
 - 测试所有边界情况
 - 测试并发操作
@@ -346,6 +445,7 @@ pip install .
 4. ✅ 文档完整，包含使用示例
 5. ✅ 能够通过 MCP Inspector 测试
 6. ✅ 能够与 Claude Desktop 集成
+7. ✅ AI 可以闭环测试：编译→烧录→连接→RTT 验证
 
 ## 时间线
 
@@ -354,6 +454,6 @@ pip install .
 - **Day 4**: 设备控制和重置
 - **Day 5**: 固件烧录
 - **Day 6**: 资源和提示
-- **Day 7**: 测试和文档
+- **Day 7**: 闭环测试和文档
 
 总计：7 天开发时间
