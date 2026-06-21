@@ -30,7 +30,7 @@ def get_debugging_prompt() -> str:
 
 ## 常用操作
 
-1. 连接设备: `connect(target="STM32F103C8T6", interface="SWD")`
+1. 连接设备: `connect(target="STM32F103C8", interface="SWD")`
 2. 读取日志: `read_rtt()` (读取所有通道)
 3. 重置设备: `reset(mode="auto_reconnect")`
 4. 烧录固件: `flash_firmware(firmware_path="path/to/firmware.bin")`

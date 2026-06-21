@@ -83,7 +83,7 @@ class JLinkManager:
         self.last_connect_params: tuple[str, str, int, int] | None = None
 
         # RTT 相关
-        self._decoder: codecs.IncrementalDecoder | None = None
+        self._decoders: dict[int, codecs.IncrementalDecoder] = {}
         self._encoding: str = "utf-8"
         self._channel: int = 0
         self._rtt_buffer: list[RTTData] = []
@@ -107,12 +107,17 @@ class JLinkManager:
         return self.jlink
 
     def _run_in_executor(self, func: Callable, *args: Any) -> Any:
-        """在线程池中执行阻塞操作"""
+        """在线程池中执行阻塞操作（J-Link 操作需序列化）"""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = asyncio.get_event_loop()
         return loop.run_in_executor(None, func, *args)
+
+    async def _run_serialized(self, func: Callable, *args: Any) -> Any:
+        """序列化执行阻塞操作，防止并发访问 J-Link"""
+        async with self._executor_lock:
+            return await self._run_in_executor(func, *args)
 
     async def connect(
         self,
@@ -145,6 +150,12 @@ class JLinkManager:
         if interface not in ("SWD", "JTAG"):
             raise ValueError(f"Invalid interface: {interface}. Must be 'SWD' or 'JTAG'")
 
+        if not 0 <= channel <= 15:
+            raise ValueError(f"Invalid channel: {channel}. Must be 0-15")
+
+        if retry_attempts < 1:
+            raise ValueError(f"retry_attempts must be >= 1, got {retry_attempts}")
+
         self.state = ConnectionState.CONNECTING
         self._channel = channel
 
@@ -154,7 +165,7 @@ class JLinkManager:
                 logger.info(f"Connection attempt {attempt + 1}/{retry_attempts}")
 
                 # 使用线程池执行器执行阻塞的 J-Link 操作
-                await self._run_in_executor(
+                await self._run_serialized(
                     self._do_connect, target, interface, speed
                 )
 
@@ -163,13 +174,13 @@ class JLinkManager:
                 self.last_connect_params = (target, interface, speed, channel)
 
                 # 收集设备信息
-                self.device_info = await self._run_in_executor(
+                self.device_info = await self._run_serialized(
                     self._collect_device_info, target, interface, speed
                 )
                 self.device_info.connected = True
 
                 # 查找 RTT 控制块
-                self._rtt_cb_addr = await self._run_in_executor(
+                self._rtt_cb_addr = await self._run_serialized(
                     self._find_rtt_cb
                 )
 
@@ -184,6 +195,12 @@ class JLinkManager:
             except Exception as e:
                 last_error = e
                 logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+                # 重置状态并异步清理 J-Link 连接
+                self.state = ConnectionState.IDLE
+                try:
+                    await self._run_serialized(self._do_disconnect)
+                except Exception:
+                    pass
                 if attempt < retry_attempts - 1:
                     # 等待后重试
                     await asyncio.sleep(1.0)
@@ -280,11 +297,13 @@ class JLinkManager:
         self.state = ConnectionState.DISCONNECTING
 
         try:
-            await self._run_in_executor(self._do_disconnect)
+            await self._run_serialized(self._do_disconnect)
 
             self.state = ConnectionState.IDLE
             self.device_info = DeviceInfo()
             self._rtt_cb_addr = 0
+            self._rtt_buffer = []
+            self._decoders.clear()
 
             logger.info("Disconnected from J-Link")
             return {"success": True, "message": "Disconnected"}
@@ -292,6 +311,9 @@ class JLinkManager:
         except Exception as e:
             logger.error(f"Disconnect failed: {e}")
             self.state = ConnectionState.IDLE
+            self._rtt_cb_addr = 0
+            self._rtt_buffer = []
+            self._decoders.clear()
             return {"success": False, "message": f"Disconnect failed: {e}"}
 
     def _do_disconnect(self) -> None:
@@ -317,14 +339,12 @@ class JLinkManager:
     async def read_rtt(
         self,
         channels: list[int] | None = None,
-        timeout: float = 1.0,
         max_size: int = 4096,
     ) -> dict[str, Any]:
         """读取 RTT 日志数据
 
         Args:
             channels: 要读取的通道列表，None 表示所有通道（默认读取所有通道）
-            timeout: 读取超时时间（秒）
             max_size: 最大读取字节数
 
         Returns:
@@ -344,18 +364,15 @@ class JLinkManager:
         all_data: list[dict[str, Any]] = []
 
         # 在线程池中执行读取操作 (使用手动 RTT CB 访问)
-        raw_data_list = await self._run_in_executor(
-            self._do_read_rtt_manual_with_rd_update, -1, max_size
+        raw_data_list = await self._run_serialized(
+            self._do_read_rtt_manual_with_rd_update, channels, max_size
         )
-
-        # 过滤指定通道
-        channel_set = set(channels)
-        raw_data_list = [(ch, data) for ch, data in raw_data_list if ch in channel_set]
 
         # 解码并格式化数据
         for channel, raw_data in raw_data_list:
-            if raw_data and self._decoder is not None:
-                decoded = self._decoder.decode(bytes(raw_data))
+            if raw_data:
+                decoder = self._get_decoder(channel)
+                decoded = decoder.decode(bytes(raw_data))
                 # 去除首尾空字节和空白
                 decoded = decoded.strip("\x00").strip()
                 if decoded:
@@ -371,8 +388,8 @@ class JLinkManager:
                     }
                     all_data.append(rtt_data)
 
-                    # 写入日志文件（如果正在录制）
-                    self._write_log_file(decoded + "\n")
+                    # 写入日志文件（如果正在录制，异步执行）
+                    await self._run_in_executor(self._write_log_file, decoded + "\n")
 
                     # 添加到缓冲区
                     async with self._rtt_lock:
@@ -411,13 +428,20 @@ class JLinkManager:
         return results
 
     def _reset_decoder(self) -> None:
-        """重置解码器"""
-        try:
-            self._decoder = codecs.getincrementaldecoder(self._encoding)(errors="replace")
-        except LookupError:
-            logger.warning(f"Unknown encoding {self._encoding}, falling back to utf-8")
-            self._encoding = "utf-8"
-            self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        """重置所有通道的解码器"""
+        self._decoders.clear()
+
+    def _get_decoder(self, channel: int) -> codecs.IncrementalDecoder:
+        """获取指定通道的解码器（每通道独立）"""
+        if channel not in self._decoders:
+            try:
+                dec_cls = codecs.getincrementaldecoder(self._encoding)
+                self._decoders[channel] = dec_cls(errors="replace")
+            except LookupError:
+                logger.warning(f"Unknown encoding {self._encoding}, falling back to utf-8")
+                self._encoding = "utf-8"
+                self._decoders[channel] = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        return self._decoders[channel]
 
     def _parse_ansi_metadata(self, text: str, channel: int = 0) -> dict[str, Any]:
         """解析 ANSI 颜色代码，提取元数据"""
@@ -462,18 +486,21 @@ class JLinkManager:
 
         target_channel = channel if channel is not None else self._channel
 
+        if not 0 <= target_channel <= 15:
+            return {"success": False, "message": f"Invalid channel: {target_channel}. Must be 0-15"}
+
         try:
             # 准备数据
             if is_hex:
                 cleaned = data.replace(" ", "").replace("\n", "").replace("\r", "")
                 if len(cleaned) % 2 != 0:
-                    cleaned += "0"
+                    cleaned = "0" + cleaned
                 payload = bytes.fromhex(cleaned)
             else:
                 payload = data.encode("utf-8")
 
-            # 执行写入 (使用手动 RTT CB 访问)
-            written = await self._run_in_executor(
+            # 序列化执行写入 (使用手动 RTT CB 访问)
+            written = await self._run_serialized(
                 self._do_write_rtt_manual, target_channel, payload
             )
 
@@ -488,10 +515,7 @@ class JLinkManager:
             logger.error(f"Failed to write RTT: {e}")
             return {"success": False, "message": str(e)}
 
-    def _do_write_rtt(self, channel: int, payload: bytes) -> int:
-        """执行 RTT 写入操作（在线程池中运行）"""
-        jlink = self._ensure_jlink()
-        return int(jlink.rtt_write(channel, payload))
+
 
     async def set_rtt_channel(self, channel: int) -> dict[str, Any]:
         """设置默认 RTT 通道
@@ -555,7 +579,7 @@ class JLinkManager:
             except Exception as e:
                 return False, str(e)
 
-        ok, err = await self._run_in_executor(do_reset)
+        ok, err = await self._run_serialized(do_reset)
 
         return {
             "success": ok,
@@ -572,7 +596,10 @@ class JLinkManager:
             except Exception as e:
                 return False, str(e)
 
-        ok, err = await self._run_in_executor(do_reset)
+        ok, err = await self._run_serialized(do_reset)
+
+        if ok:
+            self._rtt_cb_addr = 0
 
         return {
             "success": ok,
@@ -603,17 +630,17 @@ class JLinkManager:
 
         # 4. 重连
         result = await self.connect(*params)
-        result["message"] = "Reset with reconnect completed"
+        original_msg = result.get("message", "")
+        result["message"] = f"Reset with reconnect completed. {original_msg}"
         return result
 
     async def flash_firmware(
-        self, firmware_path: str, verify: bool = True
+        self, firmware_path: str
     ) -> dict[str, Any]:
         """烧录固件到 MCU
 
         Args:
-            firmware_path: 固件文件路径 (.hex, .bin, .axf)
-            verify: 是否在烧录后验证
+            firmware_path: 固件文件路径 (.hex, .bin)
 
         Returns:
             烧录结果
@@ -626,15 +653,15 @@ class JLinkManager:
         if not path.exists():
             return {"success": False, "message": f"Firmware file not found: {firmware_path}"}
 
-        if path.suffix.lower() not in (".hex", ".bin", ".axf", ".elf"):
+        if path.suffix.lower() not in (".hex", ".bin"):
             return {"success": False, "message": f"Unsupported firmware format: {path.suffix}"}
 
         try:
             logger.info(f"Flashing firmware: {firmware_path}")
 
             # 执行烧录
-            result: dict[str, Any] = await self._run_in_executor(
-                self._do_flash_firmware, firmware_path, verify
+            result: dict[str, Any] = await self._run_serialized(
+                self._do_flash_firmware, firmware_path
             )
 
             return result
@@ -644,7 +671,7 @@ class JLinkManager:
             return {"success": False, "message": str(e)}
 
     def _do_flash_firmware(
-        self, firmware_path: str, verify: bool
+        self, firmware_path: str
     ) -> dict[str, Any]:
         """执行固件烧录（在线程池中运行）"""
         jlink = self._ensure_jlink()
@@ -668,12 +695,10 @@ class JLinkManager:
                 start_addr = 0x08000000
                 jlink.flash.bin(start_addr, firmware_data, programming=True)
             else:
-                jlink.flash.elf(firmware_data)
-
-            # 验证
-            if verify:
-                logger.info("Verifying flash...")
-                # 这里应该添加验证逻辑
+                return {
+                    "success": False,
+                    "message": f"Format {path.suffix} not supported. Use Keil UV4 for .axf/.elf.",
+                }
 
             return {
                 "success": True,
@@ -751,11 +776,14 @@ class JLinkManager:
         if self.state != ConnectionState.CONNECTED:
             return {"success": False, "message": "Not connected"}
 
+        if address < 0:
+            return {"success": False, "message": "Invalid address (must be >= 0)"}
+
         if size <= 0 or size > 0x100000:  # 限制最大 1MB
             return {"success": False, "message": "Invalid size (must be 1-1048576)"}
 
         try:
-            data = await self._run_in_executor(
+            data = await self._run_serialized(
                 self._do_read_memory, address, size
             )
 
@@ -792,18 +820,24 @@ class JLinkManager:
         if self.state != ConnectionState.CONNECTED:
             return {"success": False, "message": "Not connected"}
 
+        if address < 0:
+            return {"success": False, "message": "Invalid address (must be >= 0)"}
+
         try:
             # 准备数据
             if is_hex:
                 cleaned = data.replace(" ", "").replace("\n", "").replace("\r", "")
                 if len(cleaned) % 2 != 0:
-                    cleaned += "0"
+                    cleaned = "0" + cleaned
                 payload = bytes.fromhex(cleaned)
             else:
                 payload = data.encode("utf-8")
 
-            # 执行写入
-            written = await self._run_in_executor(
+            if len(payload) > 0x100000:  # 限制最大 1MB
+                return {"success": False, "message": "Payload too large (max 1MB)"}
+
+            # 序列化执行写入
+            written = await self._run_serialized(
                 self._do_write_memory, address, payload
             )
 
@@ -880,12 +914,12 @@ class JLinkManager:
             RTT CB 地址，未找到返回 0
         """
         jlink = self._ensure_jlink()
-        # 暂停 MCU 以读取内存
-        jlink.halt()
-        time.sleep(0.05)
         try:
-            for offset in range(0, 0x5000, 256):
-                data = bytes(jlink.memory_read(0x20000000 + offset, 256))
+            jlink.halt()
+            time.sleep(0.05)
+            chunk_size = 261
+            for offset in range(0, 0x40000, 256):
+                data = bytes(jlink.memory_read(0x20000000 + offset, chunk_size))
                 idx = data.find(b"SEGGER")
                 if idx >= 0:
                     addr = 0x20000000 + offset + idx
@@ -899,9 +933,14 @@ class JLinkManager:
             jlink.restart()
 
     def _do_read_rtt_manual_with_rd_update(
-        self, channel: int, max_size: int
+        self, channels: list[int], max_size: int
     ) -> list[tuple[int, list[int]]]:
-        """手动读取 RTT 数据并更新 rd 指针"""
+        """手动读取 RTT 数据并更新 rd 指针
+
+        Args:
+            channels: 要读取的通道列表，-1 表示所有通道
+            max_size: 每通道最大读取字节数
+        """
         jlink = self._ensure_jlink()
 
         if self._rtt_cb_addr == 0:
@@ -909,11 +948,9 @@ class JLinkManager:
             if self._rtt_cb_addr == 0:
                 return []
 
-        # 暂停 MCU 以读取内存
-        jlink.halt()
-        time.sleep(0.05)
-
         try:
+            jlink.halt()
+            time.sleep(0.05)
             results: list[tuple[int, list[int]]] = []
 
             # 先读取头部获取通道数
@@ -926,7 +963,10 @@ class JLinkManager:
             cb_size = 24 + (num_up + num_down) * 24
             cb = bytearray(jlink.memory_read(self._rtt_cb_addr, cb_size))
 
-            channels_to_read = [channel] if channel >= 0 else list(range(min(num_up, 16)))
+            if -1 in channels:
+                channels_to_read = list(range(min(num_up, 16)))
+            else:
+                channels_to_read = [ch for ch in channels if 0 <= ch < num_up]
             cb_modified = False
 
             for ch in channels_to_read:
@@ -939,6 +979,9 @@ class JLinkManager:
                 wr = struct.unpack_from("<I", cb, off + 16)[0]
 
                 if buf_ptr < 0x20000000 or buf_size == 0:
+                    continue
+
+                if rd >= buf_size or wr >= buf_size:
                     continue
 
                 ring = bytes(jlink.memory_read(buf_ptr, buf_size))
@@ -980,15 +1023,17 @@ class JLinkManager:
             if self._rtt_cb_addr == 0:
                 return 0
 
-        # 暂停 MCU 以读写内存
-        jlink.halt()
-        time.sleep(0.05)
-
         try:
+            jlink.halt()
+            time.sleep(0.05)
             # 先读取头部获取通道数
             header = bytearray(jlink.memory_read(self._rtt_cb_addr, 24))
             num_up = struct.unpack_from("<I", header, 16)[0]
+            if num_up > 16:
+                return 0
             num_down = struct.unpack_from("<I", header, 20)[0]
+            if num_down > 16:
+                return 0
             # 动态计算 CB 大小: 24 (header) + (num_up + num_down) * 24
             cb_size = 24 + (num_up + num_down) * 24
             cb = bytearray(jlink.memory_read(self._rtt_cb_addr, cb_size))

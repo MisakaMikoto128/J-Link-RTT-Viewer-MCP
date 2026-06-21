@@ -145,7 +145,6 @@ async def get_device_info() -> str:
 @mcp.tool()
 async def read_rtt(
     channels: list[int] | None = None,
-    timeout: float = 1.0,
     max_size: int = 4096,
 ) -> str:
     """读取 RTT 日志数据
@@ -155,7 +154,6 @@ async def read_rtt(
 
     Args:
         channels: 要读取的通道列表，None 表示所有通道 (默认)
-        timeout: 读取超时时间（秒），默认 1.0
         max_size: 最大读取字节数，默认 4096
 
     Returns:
@@ -165,7 +163,6 @@ async def read_rtt(
     try:
         result = await manager.read_rtt(
             channels=channels,
-            timeout=timeout,
             max_size=max_size,
         )
         return json.dumps(result, ensure_ascii=False, indent=2)
@@ -269,15 +266,13 @@ async def reset(
 @mcp.tool()
 async def flash_firmware(
     firmware_path: str,
-    verify: bool = True,
 ) -> str:
     """烧录固件到 MCU
 
     将固件文件烧录到连接的目标 MCU。
 
     Args:
-        firmware_path: 固件文件路径 (.hex, .bin, .axf)
-        verify: 是否在烧录后验证，默认 True
+        firmware_path: 固件文件路径 (.hex, .bin)
 
     Returns:
         烧录结果的 JSON 字符串
@@ -286,7 +281,6 @@ async def flash_firmware(
     try:
         result = await manager.flash_firmware(
             firmware_path=firmware_path,
-            verify=verify,
         )
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -370,7 +364,7 @@ async def start_log_recording(log_dir: str = "logs") -> str:
     """
     manager = get_manager()
     try:
-        result = manager.start_log_recording(log_dir)
+        result = await manager._run_in_executor(manager.start_log_recording, log_dir)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.exception("Unexpected error starting log recording")
@@ -391,7 +385,7 @@ async def stop_log_recording() -> str:
     """
     manager = get_manager()
     try:
-        result = manager.stop_log_recording()
+        result = await manager._run_in_executor(manager.stop_log_recording)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.exception("Unexpected error stopping log recording")

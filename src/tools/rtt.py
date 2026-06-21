@@ -10,13 +10,11 @@ from ..core.jlink_manager import JLinkManager
 async def read_rtt(
     manager: JLinkManager,
     channels: list[int] | None = None,
-    timeout: float = 1.0,
     max_size: int = 4096,
 ) -> dict[str, Any]:
     """读取 RTT 日志数据"""
     return await manager.read_rtt(
         channels=channels,
-        timeout=timeout,
         max_size=max_size,
     )
 
