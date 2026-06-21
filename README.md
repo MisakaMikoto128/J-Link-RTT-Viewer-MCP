@@ -78,7 +78,7 @@ Claude: [calls flash_firmware tool] Firmware flashed successfully!
 ### Test with MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector python -m src.server
+npx @modelcontextprotocol/inspector -- python -m src.server
 ```
 
 ### Supported Hardware
@@ -180,7 +180,7 @@ Claude: [调用 flash_firmware 工具] 固件烧录成功！
 ### 使用 MCP Inspector 测试
 
 ```bash
-npx @modelcontextprotocol/inspector python -m src.server
+npx @modelcontextprotocol/inspector -- python -m src.server
 ```
 
 ### 支持的硬件

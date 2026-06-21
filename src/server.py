@@ -9,17 +9,22 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from .core.jlink_manager import JLinkManager
 
-# 配置日志
+# 配置日志 - 使用平台适配的日志目录
+_log_dir = Path.home() / ".jlink-rtt-mcp"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log_file = _log_dir / "jlink_mcp.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("jlink_mcp.log", encoding="utf-8"),
+        logging.FileHandler(str(_log_file), encoding="utf-8"),
         logging.StreamHandler(sys.stderr),  # MCP 服务器不能写入 stdout
     ],
 )

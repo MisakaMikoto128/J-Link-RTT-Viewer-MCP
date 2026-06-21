@@ -6,7 +6,7 @@
         "-m",
         "src.server"
       ],
-      "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP-mimo"
+      "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP"
     }
   }
 }
