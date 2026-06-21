@@ -215,12 +215,18 @@ class JLinkManager:
         """执行连接操作（在线程池中运行）"""
         jlink = self._ensure_jlink()
 
+        # 先尝试关闭已打开的连接（处理重复连接场景）
+        try:
+            if jlink.opened():
+                jlink.close()
+        except Exception:
+            pass
+
         # pylink 1.6.0 的双开模式
-        if not jlink.opened():
-            jlink.open()
-            ser_num = jlink.serial_number
-            jlink.close()
-            jlink.open(str(ser_num))
+        jlink.open()
+        ser_num = jlink.serial_number
+        jlink.close()
+        jlink.open(str(ser_num))
 
         # 设置接口
         tif = JLinkInterfaces.SWD if interface == "SWD" else JLinkInterfaces.JTAG
@@ -332,6 +338,9 @@ class JLinkManager:
             self.jlink.close()
         except Exception as e:
             logger.warning(f"close failed: {e}")
+
+        # 重置 JLink 实例状态，确保下次连接干净
+        self.jlink = None
 
         # 关闭日志文件
         self._close_log_file()
