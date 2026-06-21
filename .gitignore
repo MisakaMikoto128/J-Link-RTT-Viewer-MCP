@@ -49,6 +49,7 @@ Thumbs.db
 jlink_mcp.log
 *.tmp
 *.bak
+.mimocode/
 
 # Keil MDK-ARM 编译输出 (所有 MDK-ARM 目录)
 **/MDK-ARM/STM32F103C8T6/
