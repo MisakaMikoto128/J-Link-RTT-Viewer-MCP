@@ -101,8 +101,22 @@ class JLinkManager:
         logger.info("JLinkManager initialized")
 
     def _ensure_jlink(self) -> pylink.JLink:
-        """确保 JLink 实例存在"""
+        """确保 JLink 实例存在，优先使用 bundled DLLs"""
         if self.jlink is None:
+            # 尝试使用 bundled DLLs
+            dll_path = Path(__file__).parent.parent.parent / "dlls" / "JLink_x64.dll"
+            if dll_path.exists():
+                try:
+                    from pylink import library
+                    lib = library.Library(path=str(dll_path))
+                    lib.load()
+                    self.jlink = pylink.JLink(lib=lib)
+                    logger.info(f"Using bundled J-Link DLL: {dll_path}")
+                    return self.jlink
+                except Exception as e:
+                    logger.warning(f"Failed to load bundled DLL: {e}, using system J-Link")
+            
+            # 回退到系统 J-Link
             self.jlink = pylink.JLink()
         return self.jlink
 
