@@ -101,22 +101,8 @@ class JLinkManager:
         logger.info("JLinkManager initialized")
 
     def _ensure_jlink(self) -> pylink.JLink:
-        """确保 JLink 实例存在，优先使用 bundled DLLs"""
+        """确保 JLink 实例存在"""
         if self.jlink is None:
-            # 尝试使用 bundled DLLs
-            dll_path = Path(__file__).parent.parent.parent / "dlls" / "JLink_x64.dll"
-            if dll_path.exists():
-                try:
-                    from pylink import library
-                    lib = library.Library(path=str(dll_path))
-                    lib.load()
-                    self.jlink = pylink.JLink(lib=lib)
-                    logger.info(f"Using bundled J-Link DLL: {dll_path}")
-                    return self.jlink
-                except Exception as e:
-                    logger.warning(f"Failed to load bundled DLL: {e}, using system J-Link")
-            
-            # 回退到系统 J-Link
             self.jlink = pylink.JLink()
         return self.jlink
 
@@ -229,18 +215,14 @@ class JLinkManager:
         """执行连接操作（在线程池中运行）"""
         jlink = self._ensure_jlink()
 
-        # 先尝试关闭已打开的连接（处理重复连接场景）
+        # 强制关闭可能存在的连接
         try:
-            if jlink.opened():
-                jlink.close()
+            jlink.close()
         except Exception:
             pass
 
-        # pylink 1.6.0 的双开模式
+        # 直接打开（不使用双开模式，避免 DLL 状态问题）
         jlink.open()
-        ser_num = jlink.serial_number
-        jlink.close()
-        jlink.open(str(ser_num))
 
         # 设置接口
         tif = JLinkInterfaces.SWD if interface == "SWD" else JLinkInterfaces.JTAG
