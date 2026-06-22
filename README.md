@@ -6,86 +6,78 @@
 
 ## English
 
-An MCP (Model Context Protocol) server that wraps J-Link RTT Viewer functionality, enabling AI assistants to interact with STM32 development boards through a standardized interface.
+An MCP server that wraps J-Link RTT Viewer, enabling AI assistants to control STM32 development boards via natural language.
 
-### What is MCP?
-
-MCP is like a USB-C port for AI applications. It provides a standardized way for AI assistants (Claude, ChatGPT, etc.) to connect to external systems like J-Link debuggers.
-
-### Quick Start
-
-#### 1. Install
+### Quick Start (3 steps)
 
 ```bash
+# 1. Clone and install
 git clone https://github.com/MisakaMikoto128/J-Link-RTT-Viewer-MCP.git
 cd J-Link-RTT-Viewer-MCP
-
-# Create virtual environment (recommended)
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
-
-# Option A: Simple install (recommended for users)
+python -m venv .venv && .venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 
-# Option B: Development install (for contributors)
-pip install -e ".[dev]"
+# 2. Configure Claude Desktop
+# Add to %APPDATA%\Claude\claude_desktop_config.json:
+# { "mcpServers": { "jlink-rtt": { "command": "python", "args": ["-m", "src.server"], "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP" } } }
+
+# 3. Restart Claude Desktop and use natural language!
 ```
 
-**Prerequisites**: Python 3.10+, J-Link drivers installed
+### Tool Reference
 
-#### 2. Configure in Claude Desktop
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `connect` | `target`, `interface="SWD"`, `speed=4000` | Connect to MCU. Target example: `STM32F103C8` |
+| `disconnect` | (none) | Disconnect from J-Link |
+| `read_rtt` | `channels=[0]`, `max_size=4096` | Read RTT log data from MCU |
+| `write_rtt` | `data`, `channel=0` | Send command to MCU via RTT |
+| `reset` | `mode="normal"` | Reset MCU. Modes: normal, auto_reconnect, halt |
+| `flash_firmware` | `firmware_path` | Flash .hex or .bin file to MCU |
+| `get_device_info` | (none) | Get connected device details |
+| `read_memory` | `address`, `size` | Read MCU memory (hex address like 0x08000000) |
+| `write_memory` | `address`, `data` | Write data to MCU memory |
+| `start_log_recording` | `log_dir="logs"` | Record RTT output to file |
+| `stop_log_recording` | (none) | Stop recording |
+| `set_rtt_channel` | `channel` | Set default RTT channel (0-15) |
 
-Add to `%APPDATA%\Claude\claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "jlink-rtt": {
-      "command": "python",
-      "args": ["-m", "src.server"],
-      "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP"
-    }
-  }
-}
-```
-
-#### 3. Restart Claude Desktop
-
-#### 4. Use natural language!
-
-That's it! No code required. Just talk to Claude:
+### Common Commands (for write_rtt)
 
 ```
-You: Connect to my STM32F103C8 board
-Claude: [calls connect tool] Connected successfully!
-
-You: Read the RTT logs
-Claude: [calls read_rtt tool] Here are the logs...
-
-You: Make the LED blink faster
-Claude: [calls write_rtt tool with "freq 200"] Done!
-
-You: Flash the new firmware
-Claude: [calls flash_firmware tool] Firmware flashed successfully!
+freq 200      - Set LED blink interval to 200ms
+freq 1000     - Set LED blink interval to 1s
+mode on       - Turn LED on
+mode off      - Turn LED off
+mode blink    - Set LED to blink mode
+status        - Get current settings
+ping          - Test connection (returns "pong")
+reset         - Reset MCU software
 ```
 
-### Available Tools
+### Example: Control LED
 
-| Tool | What it does |
-|------|-------------|
-| `connect` | Connect to J-Link and target MCU |
-| `disconnect` | Disconnect from J-Link |
-| `read_rtt` | Read RTT log data |
-| `write_rtt` | Write data to RTT channel |
-| `set_rtt_channel` | Set default RTT channel (0-15) |
-| `reset` | Reset MCU (normal/auto_reconnect/halt) |
-| `get_device_info` | Get connected device info |
-| `flash_firmware` | Flash .hex or .bin firmware |
-| `read_memory` | Read MCU memory |
-| `write_memory` | Write MCU memory |
-| `start_log_recording` | Record RTT to file |
-| `stop_log_recording` | Stop recording |
+```
+User: Connect to my STM32F103C8 board
+AI: [connect] Connected to STM32F103C8
+
+User: What's in the RTT logs?
+AI: [read_rtt] STM32F103C8T6 LED Control ===\r\nCommands: freq, mode, status...
+
+User: Make the LED blink faster
+AI: [write_rtt, data="freq 200"] Done! LED now blinks every 200ms
+
+User: Turn the LED on
+AI: [write_rtt, data="mode on"] LED is now on
+
+User: Flash new firmware
+AI: [flash_firmware, firmware_path="path/to/firmware.hex"] Flash complete!
+```
+
+### Supported Hardware
+
+- **Debugger**: SEGGER J-Link (V7-V10)
+- **MCU**: STM32F1xx, STM32F4xx, nRF52xxx, etc.
+- **Interface**: SWD, JTAG
 
 ### Test with MCP Inspector
 
@@ -93,139 +85,85 @@ Claude: [calls flash_firmware tool] Firmware flashed successfully!
 npx @modelcontextprotocol/inspector -- python -m src.server
 ```
 
-### Supported Hardware
-
-- **Debugger**: SEGGER J-Link (V7, V8, V9, V10)
-- **MCU**: STM32F1xx, STM32F4xx, nRF52xxx
-- **Interface**: SWD, JTAG
-
-### Development
-
-```bash
-# Run tests
-pytest tests/ -v
-
-# Lint
-ruff check src/
-
-# Type check
-mypy src/ --ignore-missing-imports
-```
-
-### License
-
-MIT License
-
 ---
 
 ## 中文
 
-一个封装 J-Link RTT Viewer 功能的 MCP 服务器，使 AI 助手能够通过标准化接口与 STM32 开发板进行交互。
+封装 J-Link RTT Viewer 的 MCP 服务器，使 AI 助手能通过自然语言控制 STM32 开发板。
 
-### 什么是 MCP？
-
-MCP 就像 AI 应用的 USB-C 接口。它为 AI 助手（Claude、ChatGPT 等）提供了一种标准化的方式来连接外部系统，如 J-Link 调试器。
-
-### 快速开始
-
-#### 1. 安装
+### 快速开始（3 步）
 
 ```bash
+# 1. 克隆并安装
 git clone https://github.com/MisakaMikoto128/J-Link-RTT-Viewer-MCP.git
 cd J-Link-RTT-Viewer-MCP
-
-# 创建虚拟环境（推荐）
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
-
-# 方式 A：简单安装（推荐用户使用）
+python -m venv .venv && .venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 
-# 方式 B：开发安装（贡献者使用）
-pip install -e ".[dev]"
+# 2. 配置 Claude Desktop
+# 添加到 %APPDATA%\Claude\claude_desktop_config.json:
+# { "mcpServers": { "jlink-rtt": { "command": "python", "args": ["-m", "src.server"], "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP" } } }
+
+# 3. 重启 Claude Desktop，用自然语言对话！
 ```
 
-**前置条件**: Python 3.10+, 已安装 J-Link 驱动
+### 工具参考
 
-#### 2. 在 Claude Desktop 中配置
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `connect` | `target`, `interface="SWD"`, `speed=4000` | 连接 MCU。示例: `STM32F103C8` |
+| `disconnect` | (无) | 断开 J-Link |
+| `read_rtt` | `channels=[0]`, `max_size=4096` | 读取 MCU 的 RTT 日志 |
+| `write_rtt` | `data`, `channel=0` | 通过 RTT 发送命令到 MCU |
+| `reset` | `mode="normal"` | 重置 MCU。模式: normal, auto_reconnect, halt |
+| `flash_firmware` | `firmware_path` | 烧录 .hex 或 .bin 文件 |
+| `get_device_info` | (无) | 获取设备详细信息 |
+| `read_memory` | `address`, `size` | 读取 MCU 内存 |
+| `write_memory` | `address`, `data` | 写入 MCU 内存 |
+| `start_log_recording` | `log_dir="logs"` | 录制 RTT 输出到文件 |
+| `stop_log_recording` | (无) | 停止录制 |
+| `set_rtt_channel` | `channel` | 设置默认 RTT 通道 (0-15) |
 
-添加到 `%APPDATA%\Claude\claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "jlink-rtt": {
-      "command": "python",
-      "args": ["-m", "src.server"],
-      "cwd": "C:\\path\\to\\J-Link-RTT-Viewer-MCP"
-    }
-  }
-}
-```
-
-#### 3. 重启 Claude Desktop
-
-#### 4. 用自然语言对话！
-
-就这样！不需要写代码。直接和 Claude 对话：
+### 常用命令（用于 write_rtt）
 
 ```
-你: 连接到我的 STM32F103C8 开发板
-Claude: [调用 connect 工具] 连接成功！
-
-你: 读取 RTT 日志
-Claude: [调用 read_rtt 工具] 这是日志数据...
-
-你: 让 LED 闪烁更快
-Claude: [调用 write_rtt 工具，参数 "freq 200"] 完成！
-
-你: 烧录新固件
-Claude: [调用 flash_firmware 工具] 固件烧录成功！
+freq 200      - 设置 LED 闪烁间隔为 200ms
+freq 1000     - 设置 LED 闪烁间隔为 1s
+mode on       - 打开 LED
+mode off      - 关闭 LED
+mode blink    - 设置 LED 闪烁模式
+status        - 获取当前设置
+ping          - 测试连接（返回 "pong"）
+reset         - 软件重置 MCU
 ```
 
-### 可用工具
+### 示例：控制 LED
 
-| 工具 | 功能 |
-|------|------|
-| `connect` | 连接 J-Link 和目标 MCU |
-| `disconnect` | 断开 J-Link 连接 |
-| `read_rtt` | 读取 RTT 日志数据 |
-| `write_rtt` | 向 RTT 通道写入数据 |
-| `set_rtt_channel` | 设置默认 RTT 通道 (0-15) |
-| `reset` | 重置 MCU (normal/auto_reconnect/halt) |
-| `get_device_info` | 获取已连接设备信息 |
-| `flash_firmware` | 烧录 .hex 或 .bin 固件 |
-| `read_memory` | 读取 MCU 内存 |
-| `write_memory` | 写入 MCU 内存 |
-| `start_log_recording` | 录制 RTT 到文件 |
-| `stop_log_recording` | 停止录制 |
+```
+用户: 连接到我的 STM32F103C8 开发板
+AI: [connect] 已连接到 STM32F103C8
+
+用户: RTT 日志里有什么？
+AI: [read_rtt] STM32F103C8T6 LED Control ===\r\nCommands: freq, mode, status...
+
+用户: 让 LED 闪快一点
+AI: [write_rtt, data="freq 200"] 完成！LED 现在每 200ms 闪烁一次
+
+用户: 打开 LED
+AI: [write_rtt, data="mode on"] LED 已打开
+
+用户: 烧录新固件
+AI: [flash_firmware, firmware_path="path/to/firmware.hex"] 烧录完成！
+```
+
+### 支持的硬件
+
+- **调试器**: SEGGER J-Link (V7-V10)
+- **MCU**: STM32F1xx, STM32F4xx, nRF52xxx 等
+- **接口**: SWD, JTAG
 
 ### 使用 MCP Inspector 测试
 
 ```bash
 npx @modelcontextprotocol/inspector -- python -m src.server
 ```
-
-### 支持的硬件
-
-- **调试器**: SEGGER J-Link (V7, V8, V9, V10)
-- **MCU**: STM32F1xx, STM32F4xx, nRF52xxx
-- **接口**: SWD, JTAG
-
-### 开发
-
-```bash
-# 运行测试
-pytest tests/ -v
-
-# 代码检查
-ruff check src/
-
-# 类型检查
-mypy src/ --ignore-missing-imports
-```
-
-### 许可证
-
-MIT 许可证
