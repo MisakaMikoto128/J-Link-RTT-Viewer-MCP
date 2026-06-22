@@ -221,8 +221,11 @@ class JLinkManager:
         except Exception:
             pass
 
-        # 直接打开（不使用双开模式，避免 DLL 状态问题）
+        # 直接打开
         jlink.open()
+        
+        # 启动 RTT（必须在 connect 之前）
+        jlink.rtt_start()
 
         # 设置接口
         tif = JLinkInterfaces.SWD if interface == "SWD" else JLinkInterfaces.JTAG
@@ -368,9 +371,9 @@ class JLinkManager:
 
         all_data: list[dict[str, Any]] = []
 
-        # 在线程池中执行读取操作 (使用手动 RTT CB 访问)
+        # 使用 pylink 的 RTT API 读取
         raw_data_list = await self._run_serialized(
-            self._do_read_rtt_manual_with_rd_update, channels, max_size
+            self._do_read_rtt_pylink, channels, max_size
         )
 
         # 解码并格式化数据
@@ -954,8 +957,6 @@ class JLinkManager:
                 return []
 
         try:
-            jlink.halt()
-            time.sleep(0.05)
             results: list[tuple[int, list[int]]] = []
 
             # 先读取头部获取通道数
@@ -964,6 +965,89 @@ class JLinkManager:
             if num_up == 0 or num_up > 16:
                 return []
             num_down = struct.unpack_from("<I", header, 20)[0]
+            if num_down > 16:
+                return []
+            # 动态计算 CB 大小
+            cb_size = 24 + (num_up + num_down) * 24
+            cb = bytearray(jlink.memory_read(self._rtt_cb_addr, cb_size))
+
+            if -1 in channels:
+                channels_to_read = list(range(min(num_up, 16)))
+            else:
+                channels_to_read = [ch for ch in channels if 0 <= ch < num_up]
+            cb_modified = False
+
+            for ch in channels_to_read:
+                if ch >= num_up:
+                    continue
+                off = 24 + ch * 24
+                buf_ptr = struct.unpack_from("<I", cb, off + 4)[0]
+                buf_size = struct.unpack_from("<I", cb, off + 8)[0]
+                rd = struct.unpack_from("<I", cb, off + 12)[0]
+                wr = struct.unpack_from("<I", cb, off + 16)[0]
+
+                if buf_ptr < 0x20000000 or buf_size == 0:
+                    continue
+
+                if rd >= buf_size or wr >= buf_size:
+                    continue
+
+                ring = bytes(jlink.memory_read(buf_ptr, buf_size))
+
+                # 读取从 rd 到 wr 的数据
+                if wr > rd:
+                    data = list(ring[rd:wr])
+                elif wr < rd:
+                    # 环形缓冲区：rd 到末尾 + 0 到 wr
+                    data = list(ring[rd:]) + list(ring[:wr])
+                else:
+                    # rd == wr，缓冲区为空
+                    # 但可能 MCU 已经写入了新数据，检查是否有非零数据
+                    # 找到最后一个非零字节
+                    last_non_zero = -1
+                    for i in range(buf_size - 1, -1, -1):
+                        if ring[i] != 0:
+                            last_non_zero = i
+                            break
+                    if last_non_zero >= 0:
+                        # 有数据，读取从 0 到 last_non_zero
+                        data = list(ring[:last_non_zero + 1])
+                    else:
+                        continue
+
+                # 过滤尾部零字节
+                while data and data[-1] == 0:
+                    data.pop()
+
+                if len(data) > max_size:
+                    data = data[:max_size]
+
+                if data:
+                    results.append((ch, data))
+                    # 不更新 rd 指针，让 MCU 继续写入
+                    # new_rd = (rd + len(data)) % buf_size
+                    # struct.pack_into("<I", cb, off + 12, new_rd)
+                    # cb_modified = True
+
+            if cb_modified:
+                jlink.memory_write(self._rtt_cb_addr, bytes(cb))
+
+            return results
+        except Exception as e:
+            logger.error(f"RTT read error: {e}")
+            return []
+
+        try:
+            results: list[tuple[int, list[int]]] = []
+
+            # 先读取头部获取通道数
+            header = bytearray(jlink.memory_read(self._rtt_cb_addr, 24))
+            num_up = struct.unpack_from("<I", header, 16)[0]
+            if num_up == 0 or num_up > 16:
+                return []
+            num_down = struct.unpack_from("<I", header, 20)[0]
+            if num_down > 16:
+                return []
             # 动态计算 CB 大小
             cb_size = 24 + (num_up + num_down) * 24
             cb = bytearray(jlink.memory_read(self._rtt_cb_addr, cb_size))
@@ -994,9 +1078,11 @@ class JLinkManager:
                 if rd == wr:
                     continue
 
+                # 读取数据（从 rd 到 wr）
                 if wr > rd:
                     data = list(ring[rd:wr])
                 else:
+                    # 环形缓冲区：rd 到末尾 + 0 到 wr
                     data = list(ring[rd:]) + list(ring[:wr])
 
                 if len(data) > max_size:
@@ -1004,6 +1090,7 @@ class JLinkManager:
 
                 if data:
                     results.append((ch, data))
+                    # 更新 rd 指针到数据末尾
                     new_rd = (rd + len(data)) % buf_size
                     struct.pack_into("<I", cb, off + 12, new_rd)
                     cb_modified = True
@@ -1012,8 +1099,31 @@ class JLinkManager:
                 jlink.memory_write(self._rtt_cb_addr, bytes(cb))
 
             return results
-        finally:
-            jlink.restart()
+        except Exception as e:
+            logger.error(f"RTT read error: {e}")
+            return []
+
+    def _do_read_rtt_pylink(
+        self, channels: list[int], max_size: int
+    ) -> list[tuple[int, list[int]]]:
+        """使用 pylink RTT API 读取数据
+        
+        Args:
+            channels: 要读取的通道列表
+            max_size: 每通道最大读取字节数
+        """
+        jlink = self._ensure_jlink()
+        results: list[tuple[int, list[int]]] = []
+        
+        for ch in channels:
+            try:
+                data = jlink.rtt_read(ch, max_size)
+                if data:
+                    results.append((ch, list(data)))
+            except Exception as e:
+                logger.warning(f"Failed to read RTT channel {ch}: {e}")
+        
+        return results
 
     def _do_write_rtt_manual(self, channel: int, payload: bytes) -> int:
         """手动写入 RTT down buffer
@@ -1029,8 +1139,7 @@ class JLinkManager:
                 return 0
 
         try:
-            jlink.halt()
-            time.sleep(0.05)
+            # 不要 halt MCU
             # 先读取头部获取通道数
             header = bytearray(jlink.memory_read(self._rtt_cb_addr, 24))
             num_up = struct.unpack_from("<I", header, 16)[0]
@@ -1079,8 +1188,9 @@ class JLinkManager:
             jlink.memory_write(self._rtt_cb_addr, bytes(cb))
 
             return len(payload)
-        finally:
-            jlink.restart()
+        except Exception as e:
+            logger.error(f"RTT write error: {e}")
+            return 0
 
     async def cleanup(self) -> None:
         """清理所有资源"""
